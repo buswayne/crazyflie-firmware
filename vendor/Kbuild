@@ -1,3 +1,5 @@
+obj-y += tinympc/
+
 obj-y += CMSIS/CMSIS/DSP/Source/BasicMathFunctions/arm_abs_f32.o
 obj-y += CMSIS/CMSIS/DSP/Source/BasicMathFunctions/arm_abs_q15.o
 obj-y += CMSIS/CMSIS/DSP/Source/BasicMathFunctions/arm_abs_q31.o

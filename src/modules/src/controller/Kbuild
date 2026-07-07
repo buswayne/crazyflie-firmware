@@ -7,3 +7,8 @@ obj-y += controller_brescianini.o
 obj-y += position_controller_indi.o
 obj-y += position_controller_pid.o
 obj-y += controller_lee.o
+obj-y += controller_tinympc.o
+
+ccflags-y += -I$(srctree)/vendor/tinympc/include
+ccflags-y += -I$(srctree)/vendor/tinympc/include/tinympc
+ccflags-y += -I$(srctree)/vendor/tinympc/include/Eigen

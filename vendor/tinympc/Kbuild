@@ -1,0 +1,7 @@
+obj-y += src/tiny_api.o
+obj-y += src/admm.o
+obj-y += src/rho_benchmark.o
+
+ccflags-y += -I$(srctree)/vendor/tinympc/include
+ccflags-y += -I$(srctree)/vendor/tinympc/include/tinympc
+ccflags-y += -I$(srctree)/vendor/tinympc/include/Eigen

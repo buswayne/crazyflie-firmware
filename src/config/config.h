@@ -169,7 +169,7 @@
 
 
 //Task stack sizes
-#define SYSTEM_TASK_STACKSIZE           (2* configMINIMAL_STACK_SIZE)
+#define SYSTEM_TASK_STACKSIZE           (12 * configMINIMAL_STACK_SIZE)
 #define LEDSEQCMD_TASK_STACKSIZE        configMINIMAL_STACK_SIZE
 #define ADC_TASK_STACKSIZE              configMINIMAL_STACK_SIZE
 #define PM_TASK_STACKSIZE               configMINIMAL_STACK_SIZE

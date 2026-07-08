@@ -1,7 +1,6 @@
 #include "rho_benchmark.hpp"
 #include <cmath>
 #include <algorithm>
-#include <iostream>
 #ifdef ARDUINO
 #include <Arduino.h>
 #else
@@ -180,7 +179,7 @@ tinytype predict_rho(
     tinytype dual_norm,
     tinytype current_rho
 ) {
-    const tinytype eps = 1e-10;
+    const tinytype eps = 1e-10f;
     
     tinytype normalized_pri = pri_res / (pri_norm + eps);
     tinytype normalized_dual = dual_res / (dual_norm + eps);

@@ -24,6 +24,7 @@ obj-y += tdoa/
 ### Implementations for abort(), malloc() and free(), needed to interact with apps written in C++
 obj-y += abort.o
 obj-y += malloc.o
+obj-y += syscalls.o
 obj-y += pid.o
 
 ### Rules for handling generated version.c

@@ -17,6 +17,10 @@
 #ifndef	__EPRINTF_H__
 #define __EPRINTF_H__
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * putc function pointer definition
  */
@@ -40,5 +44,9 @@ int eprintf(putc_t putcf, const char * fmt, ...)
  * @return the number of character printed
  */
 int evprintf(putc_t putcf, const char * fmt, va_list ap);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif //__EPRINTF_H__

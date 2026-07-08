@@ -12,19 +12,27 @@ using namespace Eigen;
 extern "C" {
 #endif
 
-    typedef double tinytype;  // should be double if you want to generate code
-    typedef Matrix<tinytype, Dynamic, Dynamic> tinyMatrix;
-    typedef Matrix<tinytype, Dynamic, 1> tinyVector;
+    // float, not double: target FPU (fpv4-sp-d16) is single-precision only,
+    // double arithmetic gets soft-emulated and is what was blowing the solve
+    // time budget. Codegen tooling wants double; on-target runtime wants float.
+    typedef float tinytype;
 
-    // typedef Matrix<tinytype, NSTATES, 1> tiny_VectorNx;
-    // typedef Matrix<tinytype, NINPUTS, 1> tiny_VectorNu;
-    // typedef Matrix<tinytype, NSTATES, NSTATES> tiny_MatrixNxNx;
-    // typedef Matrix<tinytype, NSTATES, NINPUTS> tiny_MatrixNxNu;
-    // typedef Matrix<tinytype, NINPUTS, NSTATES> tiny_MatrixNuNx;
-    // typedef Matrix<tinytype, NINPUTS, NINPUTS> tiny_MatrixNuNu;
+    // ponytail: fixed at compile time (no heap) instead of Eigen::Dynamic, since
+    // this vendored copy is single-purpose for the Crazyflie MPC controller, not
+    // a generic multi-robot library. Must match CF_TINYMPC_STATE_DIM/INPUT_DIM/
+    // HORIZON in crazyflie_tinympc_constants.h if that ever changes.
+    static constexpr int NSTATES = 6;
+    static constexpr int NINPUTS = 3;
+    static constexpr int NHORIZON = 10;
 
-    // typedef Matrix<tinytype, NSTATES, NHORIZON> tiny_MatrixNxNh;       // Nu x Nh
-    // typedef Matrix<tinytype, NINPUTS, NHORIZON - 1> tiny_MatrixNuNhm1; // Nu x Nh-1
+    typedef Matrix<tinytype, NSTATES, 1> tinyVectorNx;
+    typedef Matrix<tinytype, NINPUTS, 1> tinyVectorNu;
+    typedef Matrix<tinytype, NSTATES, NSTATES> tinyMatrixNxNx;
+    typedef Matrix<tinytype, NSTATES, NINPUTS> tinyMatrixNxNu;
+    typedef Matrix<tinytype, NINPUTS, NSTATES> tinyMatrixNuNx;
+    typedef Matrix<tinytype, NINPUTS, NINPUTS> tinyMatrixNuNu;
+    typedef Matrix<tinytype, NSTATES, NHORIZON> tinyMatrixNxNh;
+    typedef Matrix<tinytype, NINPUTS, NHORIZON - 1> tinyMatrixNuNhm1;
 
     /**
      * Solution
@@ -32,8 +40,8 @@ extern "C" {
     typedef struct {
         int iter;
         int solved;
-        tinyMatrix x; // nx x N
-        tinyMatrix u; // nu x N-1
+        tinyMatrixNxNh x;    // nx x N
+        tinyMatrixNuNhm1 u;  // nu x N-1
     } TinySolution;
 
     /**
@@ -41,18 +49,10 @@ extern "C" {
      */
     typedef struct {
         tinytype rho;
-        tinyMatrix Kinf;       // nu x nx
-        tinyMatrix Pinf;       // nx x nx
-        tinyMatrix Quu_inv;    // nu x nu
-        tinyMatrix AmBKt;      // nx x nx
-        tinyMatrix C1;
-        tinyMatrix C2;
-        
-        // Add sensitivity matrices for Taylor updates
-        tinyMatrix dKinf_drho;
-        tinyMatrix dPinf_drho;
-        tinyMatrix dC1_drho;
-        tinyMatrix dC2_drho;
+        tinyMatrixNuNx Kinf;    // nu x nx
+        tinyMatrixNxNx Pinf;    // nx x nx
+        tinyMatrixNuNu Quu_inv; // nu x nu
+        tinyMatrixNxNx AmBKt;   // nx x nx
     } TinyCache;
 
     /**
@@ -65,12 +65,6 @@ extern "C" {
         int check_termination;
         int en_state_bound;
         int en_input_bound;
-        
-        // Add adaptive rho parameters
-        int adaptive_rho;                  // Enable/disable adaptive rho (1/0)
-        tinytype adaptive_rho_min;         // Minimum value for rho
-        tinytype adaptive_rho_max;         // Maximum value for rho
-        int adaptive_rho_enable_clipping;  // Enable/disable clipping of rho (1/0)
     } TinySettings;
 
     /**
@@ -82,50 +76,46 @@ extern "C" {
         int N;  // Number of knotpoints in the horizon
 
         // State and input
-        tinyMatrix x;    // nx x N
-        tinyMatrix u;    // nu x N-1
+        tinyMatrixNxNh x;      // nx x N
+        tinyMatrixNuNhm1 u;    // nu x N-1
 
         // Linear control cost terms
-        tinyMatrix q;    // nx x N
-        tinyMatrix r;    // nu x N-1
+        tinyMatrixNxNh q;      // nx x N
+        tinyMatrixNuNhm1 r;    // nu x N-1
 
         // Linear Riccati backward pass terms
-        tinyMatrix p;    // nx x N
-        tinyMatrix d;    // nu x N-1
+        tinyMatrixNxNh p;      // nx x N
+        tinyMatrixNuNhm1 d;    // nu x N-1
 
         // Auxiliary variables
-        tinyMatrix v;    // nx x N
-        tinyMatrix vnew; // nx x N
-        tinyMatrix z;    // nu x N-1
-        tinyMatrix znew; // nu x N-1
+        tinyMatrixNxNh v;      // nx x N
+        tinyMatrixNxNh vnew;   // nx x N
+        tinyMatrixNuNhm1 z;    // nu x N-1
+        tinyMatrixNuNhm1 znew; // nu x N-1
 
         // Dual variables
-        tinyMatrix g;    // nx x N
-        tinyMatrix y;    // nu x N-1
-
-
+        tinyMatrixNxNh g;      // nx x N
+        tinyMatrixNuNhm1 y;    // nu x N-1
 
         // Q, R, A, B given by user
-        tinyVector Q;       // nx x 1
-        tinyVector R;       // nu x 1
-        tinyMatrix Adyn;    // nx x nx
-        tinyMatrix Bdyn;    // nx x nu
+        tinyVectorNx Q;        // nx x 1
+        tinyVectorNu R;        // nu x 1
+        tinyMatrixNxNx Adyn;   // nx x nx
+        tinyMatrixNxNu Bdyn;   // nx x nu
 
         // State and input bounds
-        tinyMatrix x_min;   // nx x N
-        tinyMatrix x_max;   // nx x N
-        tinyMatrix u_min;   // nu x N-1
-        tinyMatrix u_max;   // nu x N-1
+        tinyMatrixNxNh x_min;  // nx x N
+        tinyMatrixNxNh x_max;  // nx x N
+        tinyMatrixNuNhm1 u_min; // nu x N-1
+        tinyMatrixNuNhm1 u_max; // nu x N-1
 
         // Reference trajectory to track for one horizon
-        tinyMatrix Xref;    // nx x N
-        tinyMatrix Uref;    // nu x N-1
+        tinyMatrixNxNh Xref;   // nx x N
+        tinyMatrixNuNhm1 Uref; // nu x N-1
 
         // Temporaries
-        tinyVector Qu;      // nu x 1
+        tinyVectorNu Qu;       // nu x 1
 
-
-        
         // Variables for keeping track of solve status
         tinytype primal_residual_state;
         tinytype primal_residual_input;
@@ -144,10 +134,6 @@ extern "C" {
         TinyCache *cache;       // Problem cache
         TinyWorkspace *work;    // Solver workspace
     } TinySolver;
-
-    // Add at the top with other definitions
-    #define BENCH_NX 12
-    #define BENCH_NU 4
 
 #ifdef __cplusplus
 }

@@ -1,7 +1,4 @@
-#include <iostream>
-
 #include "admm.hpp"
-#include "rho_benchmark.hpp"    
 
 #define DEBUG_MODULE "TINYALG"
 
@@ -114,18 +111,6 @@ int solve(TinySolver *solver)
     solver->work->status = 11; // TINY_UNSOLVED
     solver->work->iter = 0;
 
-    // Setup for adaptive rho
-    RhoAdapter adapter;
-    adapter.rho_min = solver->settings->adaptive_rho_min;
-    adapter.rho_max = solver->settings->adaptive_rho_max;
-    adapter.clip = solver->settings->adaptive_rho_enable_clipping;
-    
-    RhoBenchmarkResult rho_result;
-
-    // Store previous values for residuals
-    tinyMatrix v_prev = solver->work->vnew;
-    tinyMatrix z_prev = solver->work->znew;
-
     for (int i = 0; i < solver->settings->max_iter; i++)
     {
         // Solve linear system with Riccati and roll out to get new trajectory
@@ -142,41 +127,6 @@ int solve(TinySolver *solver)
 
         solver->work->iter += 1;
 
-        
-
-        if (solver->settings->adaptive_rho) {
-
-            // Calculate residuals for adaptive rho
-            tinytype pri_res_input = (solver->work->u - solver->work->znew).cwiseAbs().maxCoeff();
-            tinytype pri_res_state = (solver->work->x - solver->work->vnew).cwiseAbs().maxCoeff();
-            tinytype dua_res_input = solver->cache->rho * (solver->work->znew - z_prev).cwiseAbs().maxCoeff();
-            tinytype dua_res_state = solver->cache->rho * (solver->work->vnew - v_prev).cwiseAbs().maxCoeff();
-
-            // Update rho every 5 iterations
-            if (i> 0 && i % 5 == 0) {
-                benchmark_rho_adaptation(
-                    &adapter,
-                    solver->work->x,
-                    solver->work->u,
-                    solver->work->vnew,
-                    solver->work->znew,
-                    solver->work->g,
-                    solver->work->y,
-                    solver->cache,
-                    solver->work,
-                    solver->work->N,
-                    &rho_result
-                );
-                
-                // Update matrices using Taylor expansion
-                update_matrices_with_derivatives(solver->cache, rho_result.final_rho);
-            }
-        }
-            
-        // Store previous values for next iteration
-        z_prev = solver->work->znew;
-        v_prev = solver->work->vnew;
-
         // Check for whether cost is minimized by calculating residuals
         if (termination_condition(solver)) {
             solver->work->status = 1; // TINY_SOLVED
@@ -186,8 +136,6 @@ int solve(TinySolver *solver)
             solver->solution->solved = 1;
             solver->solution->x = solver->work->vnew;
             solver->solution->u = solver->work->znew;
-
-            std::cout << "Solver converged in " << solver->work->iter << " iterations" << std::endl;
 
             return 0;
         }

@@ -27,6 +27,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Initialize microsecond-resolution timer (TIM1).
  */
@@ -41,3 +45,7 @@ void usecTimerReset(void);
  * Get microsecond-resolution timestamp.
  */
 uint64_t usecTimestamp(void);
+
+#ifdef __cplusplus
+}
+#endif

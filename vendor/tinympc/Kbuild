@@ -1,6 +1,12 @@
 obj-y += src/tiny_api.o
 obj-y += src/admm.o
-obj-y += src/rho_benchmark.o
+# ponytail: rho_benchmark.o drove adaptive_rho, which admm.cpp no longer calls
+# (fixed rho, no runtime tuning needed for this controller) — dead weight, cut.
+
+# tiny_api.o's aligned operator new can legitimately return null on OOM; -fcheck-new
+# tells the compiler a null check follows the `new` expression instead of assuming
+# non-null, so it stops flagging that as an error.
+ccflags-y += -fcheck-new
 
 ccflags-y += -I$(srctree)/vendor/tinympc/include
 ccflags-y += -I$(srctree)/vendor/tinympc/include/tinympc

@@ -47,7 +47,15 @@
 #define DEBUG_FMT(fmt) fmt
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void debugInit(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #if defined(UNIT_TEST_MODE)
   #include <stdio.h>

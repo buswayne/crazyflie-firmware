@@ -30,6 +30,10 @@
 #include <stdbool.h>
 #include "eprintf.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Initialize the console
  */
@@ -77,5 +81,9 @@ void consoleFlush(void);
  * @param ... Parameters to print
  */
 #define consolePrintf(FMT, ...) eprintf(consolePutchar, FMT, ## __VA_ARGS__)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /*CONSOLE_H_*/

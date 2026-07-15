@@ -26,12 +26,11 @@
 
 static const double CF_SAFETY_FILTER_A[36] = {1.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0};
 static const double CF_SAFETY_FILTER_B[18] = {0.00125, 0.0, 0.0, 0.0, 0.00125, 0.0, 0.0, 0.0, 0.00125, 0.05, 0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.05};
-// Pos and R softened for first conservative flight (pos x0.7, R x1.5
-// vs original 8/8/14 pos, 0.35/0.35/0.5 R); vel weight left untouched since it
-// damps oscillation. Tighten back up once bench flight confirms no overshoot.
-static const double CF_SAFETY_FILTER_Q[36] = {5.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 5.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 9.8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.0};
-static const double CF_SAFETY_FILTER_R[9] = {0.525, 0.0, 0.0, 0.0, 0.525, 0.0, 0.0, 0.0, 0.75};
-static const double CF_SAFETY_FILTER_QF[36] = {44.8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 44.8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 78.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 32.0};
+// Safety filter cost: keep the solved acceleration close to the nominal pilot
+// acceleration. Q is intentionally tiny, only to regularize the rollout.
+static const double CF_SAFETY_FILTER_Q[36] = {0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01};
+static const double CF_SAFETY_FILTER_R[9] = {10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0};
+static const double CF_SAFETY_FILTER_QF[36] = {0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01};
 // No debug position box in flight. z_min=0.5 made arming command an
 // instant climb target from the ground; re-enable bounds only after bench logs.
 static const double CF_SAFETY_FILTER_X_MIN[6] = {-1e+17, -1e+17, -1e+17, -1e+17, -1e+17, -1e+17};

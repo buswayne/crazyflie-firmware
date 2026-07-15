@@ -38,9 +38,20 @@ safeFilt.iter
 safeFilt.solved
 safeFilt.priRes
 safeFilt.duaRes
+safeFilt.priState
+safeFilt.priInput
+safeFilt.duaState
+safeFilt.duaInput
+safeFilt.uNomX
+safeFilt.uNomY
+safeFilt.uNomZ
+safeFilt.uSolX
+safeFilt.uSolY
+safeFilt.uSolZ
 ```
 
 The filter lets safe Hover/PosHold joystick commands pass through unchanged.
 When the predicted motion violates the configured position box, it solves a
-constrained predictive optimization problem and passes the filtered
-position/velocity setpoint to the stock PID controller.
+constrained predictive optimization problem that keeps the acceleration close
+to the pilot nominal command while satisfying the safety bounds. It then passes
+the filtered position/velocity setpoint to the stock PID controller.

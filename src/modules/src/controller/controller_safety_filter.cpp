@@ -43,6 +43,16 @@ uint16_t solveIter = 0;
 uint8_t solveStatus = 0;
 float primalResidual = 0.0f;
 float dualResidual = 0.0f;
+float primalStateResidual = 0.0f;
+float primalInputResidual = 0.0f;
+float dualStateResidual = 0.0f;
+float dualInputResidual = 0.0f;
+float nominalAx = 0.0f;
+float nominalAy = 0.0f;
+float nominalAz = 0.0f;
+float solvedAx = 0.0f;
+float solvedAy = 0.0f;
+float solvedAz = 0.0f;
 float sfBoxXY = 0.5f;
 float sfMinZ = 0.2f;
 float sfMaxZ = 1.5f;
@@ -222,23 +232,41 @@ void resetSolverBounds()
 }
 
 void fillSafetyFilterReferenceHorizon(const state_t *state,
-                                      const float vx, const float vy, const float z,
+                                      const float ax, const float ay, const float az,
                                       tinyMatrixNxNh &x_ref, tinyMatrixNuNhm1 &u_ref)
 {
+  tinytype px = static_cast<tinytype>(state->position.x);
+  tinytype py = static_cast<tinytype>(state->position.y);
+  tinytype pz = static_cast<tinytype>(state->position.z);
+  tinytype vx = static_cast<tinytype>(state->velocity.x);
+  tinytype vy = static_cast<tinytype>(state->velocity.y);
+  tinytype vz = static_cast<tinytype>(state->velocity.z);
+  const tinytype ux = static_cast<tinytype>(ax);
+  const tinytype uy = static_cast<tinytype>(ay);
+  const tinytype uz = static_cast<tinytype>(az);
+  const tinytype dt = static_cast<tinytype>(CF_SAFETY_FILTER_DT);
+  const tinytype halfDt2 = static_cast<tinytype>(0.5f) * dt * dt;
+
   for (int k = 0; k < CF_SAFETY_FILTER_HORIZON; ++k) {
-    const tinytype tau = static_cast<tinytype>(k) * static_cast<tinytype>(CF_SAFETY_FILTER_DT);
-    x_ref(0, k) = static_cast<tinytype>(state->position.x) + tau * static_cast<tinytype>(vx);
-    x_ref(1, k) = static_cast<tinytype>(state->position.y) + tau * static_cast<tinytype>(vy);
-    x_ref(2, k) = static_cast<tinytype>(z);
+    x_ref(0, k) = px;
+    x_ref(1, k) = py;
+    x_ref(2, k) = pz;
     x_ref(3, k) = static_cast<tinytype>(vx);
     x_ref(4, k) = static_cast<tinytype>(vy);
-    x_ref(5, k) = static_cast<tinytype>(0.0f);
+    x_ref(5, k) = static_cast<tinytype>(vz);
+
+    px += dt * vx + halfDt2 * ux;
+    py += dt * vy + halfDt2 * uy;
+    pz += dt * vz + halfDt2 * uz;
+    vx += dt * ux;
+    vy += dt * uy;
+    vz += dt * uz;
   }
 
   for (int k = 0; k < CF_SAFETY_FILTER_HORIZON - 1; ++k) {
-    u_ref(0, k) = static_cast<tinytype>(0.0f);
-    u_ref(1, k) = static_cast<tinytype>(0.0f);
-    u_ref(2, k) = static_cast<tinytype>(0.0f);
+    u_ref(0, k) = ux;
+    u_ref(1, k) = uy;
+    u_ref(2, k) = uz;
   }
 }
 
@@ -259,8 +287,15 @@ void runSafetySolver(const setpoint_t *setpoint, const state_t *state)
   solveUs = static_cast<uint32_t>(usecTimestamp() - solveStartUs);
   solveIter = static_cast<uint16_t>(solver->solution->iter);
   solveStatus = static_cast<uint8_t>(solver->solution->solved);
-  primalResidual = static_cast<float>(solver->work->primal_residual_state + solver->work->primal_residual_input);
-  dualResidual = static_cast<float>(solver->work->dual_residual_state + solver->work->dual_residual_input);
+  primalStateResidual = static_cast<float>(solver->work->primal_residual_state);
+  primalInputResidual = static_cast<float>(solver->work->primal_residual_input);
+  dualStateResidual = static_cast<float>(solver->work->dual_residual_state);
+  dualInputResidual = static_cast<float>(solver->work->dual_residual_input);
+  primalResidual = fmaxf(primalStateResidual, primalInputResidual);
+  dualResidual = fmaxf(dualStateResidual, dualInputResidual);
+  solvedAx = static_cast<float>(solver->solution->u(0, 0));
+  solvedAy = static_cast<float>(solver->solution->u(1, 0));
+  solvedAz = static_cast<float>(solver->solution->u(2, 0));
   static bool solveTimeReported = false;
   if (!solveTimeReported) {
     DEBUG_PRINT("first safety solve took %lu us, iter=%u, solved=%u\n",
@@ -331,16 +366,21 @@ extern "C" void controllerSafetyFilter(control_t *control, const setpoint_t *set
     }
 
     if (!has_filtered_setpoint || RATE_DO_EXECUTE(RATE_10_HZ, stabilizerStep)) {
-      const float safeX = clampFloat(state->position.x + vx * sfLookahead,
-                                     sfOriginX - sfBoxXY, sfOriginX + sfBoxXY);
-      const float safeY = clampFloat(state->position.y + vy * sfLookahead,
-                                     sfOriginY - sfBoxXY, sfOriginY + sfBoxXY);
-      const float safeVx = (safeX - state->position.x) / sfLookahead;
-      const float safeVy = (safeY - state->position.y) / sfLookahead;
-      const float safeZ = clampFloat(predictedZ, sfMinZ, sfMaxZ);
+      const float desiredVz = setpoint->mode.z == modeVelocity
+        ? setpoint->velocity.z
+        : (predictedZ - state->position.z) / sfLookahead;
+      nominalAx = clampFloat((vx - state->velocity.x) / sfLookahead,
+                             static_cast<float>(CF_SAFETY_FILTER_U_MIN[0]),
+                             static_cast<float>(CF_SAFETY_FILTER_U_MAX[0]));
+      nominalAy = clampFloat((vy - state->velocity.y) / sfLookahead,
+                             static_cast<float>(CF_SAFETY_FILTER_U_MIN[1]),
+                             static_cast<float>(CF_SAFETY_FILTER_U_MAX[1]));
+      nominalAz = clampFloat((desiredVz - state->velocity.z) / sfLookahead,
+                             static_cast<float>(CF_SAFETY_FILTER_U_MIN[2]),
+                             static_cast<float>(CF_SAFETY_FILTER_U_MAX[2]));
 
       updateSolverSafetyBox();
-      fillSafetyFilterReferenceHorizon(state, safeVx, safeVy, safeZ, reference_states, reference_inputs);
+      fillSafetyFilterReferenceHorizon(state, nominalAx, nominalAy, nominalAz, reference_states, reference_inputs);
       runSafetySolver(setpoint, state);
 
       constexpr int kCmdHorizonIdx = CF_SAFETY_FILTER_HORIZON - 1;
@@ -356,10 +396,11 @@ extern "C" void controllerSafetyFilter(control_t *control, const setpoint_t *set
       filtered_setpoint.position.z = static_cast<float>(solver->solution->x(2, kCmdHorizonIdx));
       has_filtered_setpoint = true;
       sfInterventions++;
-      DEBUG_PRINT("SF intervention: pos=(%.2f %.2f %.2f), cmd=(%.2f %.2f), out=(%.2f %.2f %.2f)\n",
+      DEBUG_PRINT("SF intervention: pos=(%.2f %.2f %.2f), uNom=(%.2f %.2f %.2f), uSol=(%.2f %.2f %.2f), solved=%u/%u\n",
                   (double)state->position.x, (double)state->position.y, (double)state->position.z,
-                  (double)setpoint->velocity.x, (double)setpoint->velocity.y,
-                  (double)filtered_setpoint.position.x, (double)filtered_setpoint.position.y, (double)filtered_setpoint.position.z);
+                  (double)nominalAx, (double)nominalAy, (double)nominalAz,
+                  (double)solvedAx, (double)solvedAy, (double)solvedAz,
+                  solveStatus, solveIter);
     }
 
     controllerPid(control, &filtered_setpoint, sensors, state, stabilizerStep);
@@ -435,6 +476,16 @@ LOG_ADD(LOG_UINT16, iter, &solveIter)
 LOG_ADD(LOG_UINT8, solved, &solveStatus)
 LOG_ADD(LOG_FLOAT, priRes, &primalResidual)
 LOG_ADD(LOG_FLOAT, duaRes, &dualResidual)
+LOG_ADD(LOG_FLOAT, priState, &primalStateResidual)
+LOG_ADD(LOG_FLOAT, priInput, &primalInputResidual)
+LOG_ADD(LOG_FLOAT, duaState, &dualStateResidual)
+LOG_ADD(LOG_FLOAT, duaInput, &dualInputResidual)
+LOG_ADD(LOG_FLOAT, uNomX, &nominalAx)
+LOG_ADD(LOG_FLOAT, uNomY, &nominalAy)
+LOG_ADD(LOG_FLOAT, uNomZ, &nominalAz)
+LOG_ADD(LOG_FLOAT, uSolX, &solvedAx)
+LOG_ADD(LOG_FLOAT, uSolY, &solvedAy)
+LOG_ADD(LOG_FLOAT, uSolZ, &solvedAz)
 LOG_ADD(LOG_FLOAT, sfOriginX, &sfOriginX)
 LOG_ADD(LOG_FLOAT, sfOriginY, &sfOriginY)
 LOG_GROUP_STOP(safeFilt)

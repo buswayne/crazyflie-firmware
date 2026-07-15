@@ -47,10 +47,10 @@ config CONTROLLER_LEE
     help
         Use the Lee controller as default
 
-config CONTROLLER_TINYMPC
-    bool "TinyMPC controller"
+config CONTROLLER_SAFETY_FILTER
+    bool "Predictive safety filter"
     help
-        Use the TinyMPC constrained MPC controller as default
+        Use the predictive safety filter as default controller
 
 endchoice
 

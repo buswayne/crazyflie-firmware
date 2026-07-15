@@ -1,10 +1,10 @@
 CONFIG_PLATFORM_CF21BL=y
 
 CONFIG_ESTIMATOR_AUTO_SELECT=y
-CONFIG_CONTROLLER_TINYMPC=y
+CONFIG_CONTROLLER_SAFETY_FILTER=y
 CONFIG_MOTORS_REQUIRE_ARMING=y
 CONFIG_MOTORS_ESC_PROTOCOL_DSHOT=y
-# ponytail: reverted to stock Kconfig defaults (idleThrust=7000, RPM window
+# Reverted to stock Kconfig defaults (idleThrust=7000, RPM window
 # 1000-3500) -- lowering idleThrust to fix the "small liftoff at arm"
 # cosmetic issue broke arming outright (motors spin then get stopped by the
 # RPM-at-arming timeout, since the window was re-guessed twice without real

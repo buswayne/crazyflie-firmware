@@ -1,8 +1,8 @@
 /**
  * Crazyflie safety filter controller interface.
  */
-#ifndef __CONTROLLER_TINYMPC_H__
-#define __CONTROLLER_TINYMPC_H__
+#ifndef __CONTROLLER_SAFETY_FILTER_H__
+#define __CONTROLLER_SAFETY_FILTER_H__
 
 #include "stabilizer_types.h"
 
@@ -10,9 +10,9 @@
 extern "C" {
 #endif
 
-void controllerTinyMPCFirmwareInit(void);
-bool controllerTinyMPCFirmwareTest(void);
-void controllerTinyMPCFirmware(control_t *control, const setpoint_t *setpoint,
+void controllerSafetyFilterInit(void);
+bool controllerSafetyFilterTest(void);
+void controllerSafetyFilter(control_t *control, const setpoint_t *setpoint,
                                const sensorData_t *sensors,
                                const state_t *state,
                                const stabilizerStep_t stabilizerStep);
@@ -21,4 +21,4 @@ void controllerTinyMPCFirmware(control_t *control, const setpoint_t *setpoint,
 }
 #endif
 
-#endif // __CONTROLLER_TINYMPC_H__
+#endif // __CONTROLLER_SAFETY_FILTER_H__

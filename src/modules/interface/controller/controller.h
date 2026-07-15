@@ -35,7 +35,7 @@ typedef enum {
   ControllerTypeINDI,
   ControllerTypeBrescianini,
   ControllerTypeLee,
-  ControllerTypeTinyMPC,
+  ControllerTypeSafetyFilter,
 #ifdef CONFIG_CONTROLLER_OOT
   ControllerTypeOot,
 #endif

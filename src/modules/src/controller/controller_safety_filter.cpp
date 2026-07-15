@@ -3,13 +3,13 @@
 
 #include <cstddef>
 
-#include "controller_tinympc.h"
+#include "controller_safety_filter.h"
 extern "C" {
 #include "controller_pid.h"
 #include "log.h"
 #include "param.h"
 }
-#include "crazyflie_tinympc_constants.h"
+#include "safety_filter_constants.h"
 #include "stabilizer_types.h"
 #include "tinympc/tiny_api.hpp"
 #include "usec_time.h"
@@ -78,14 +78,14 @@ int initSolver()
     return 0;
   }
 
-  fillRowMajorMatrix(solver_A, CF_TINYMPC_A);
-  fillRowMajorMatrix(solver_B, CF_TINYMPC_B);
-  fillRowMajorMatrix(solver_Q, CF_TINYMPC_Q);
-  fillRowMajorMatrix(solver_R, CF_TINYMPC_R);
-  fillRepeatedColumns(solver_x_min, CF_TINYMPC_X_MIN);
-  fillRepeatedColumns(solver_x_max, CF_TINYMPC_X_MAX);
-  fillRepeatedColumns(solver_u_min, CF_TINYMPC_U_MIN);
-  fillRepeatedColumns(solver_u_max, CF_TINYMPC_U_MAX);
+  fillRowMajorMatrix(solver_A, CF_SAFETY_FILTER_A);
+  fillRowMajorMatrix(solver_B, CF_SAFETY_FILTER_B);
+  fillRowMajorMatrix(solver_Q, CF_SAFETY_FILTER_Q);
+  fillRowMajorMatrix(solver_R, CF_SAFETY_FILTER_R);
+  fillRepeatedColumns(solver_x_min, CF_SAFETY_FILTER_X_MIN);
+  fillRepeatedColumns(solver_x_max, CF_SAFETY_FILTER_X_MAX);
+  fillRepeatedColumns(solver_u_min, CF_SAFETY_FILTER_U_MIN);
+  fillRepeatedColumns(solver_u_max, CF_SAFETY_FILTER_U_MAX);
 
   const uint64_t setupStartUs = usecTimestamp();
   int status = tiny_setup(
@@ -94,10 +94,10 @@ int initSolver()
     solver_B,
     solver_Q,
     solver_R,
-    static_cast<tinytype>(CF_TINYMPC_RHO),
-    CF_TINYMPC_STATE_DIM,
-    CF_TINYMPC_INPUT_DIM,
-    CF_TINYMPC_HORIZON,
+    static_cast<tinytype>(CF_SAFETY_FILTER_RHO),
+    CF_SAFETY_FILTER_STATE_DIM,
+    CF_SAFETY_FILTER_INPUT_DIM,
+    CF_SAFETY_FILTER_HORIZON,
     solver_x_min,
     solver_x_max,
     solver_u_min,
@@ -110,10 +110,10 @@ int initSolver()
 
   return tiny_update_settings(
     solver->settings,
-    static_cast<tinytype>(CF_TINYMPC_ABS_PRI_TOL),
-    static_cast<tinytype>(CF_TINYMPC_ABS_DUA_TOL),
-    CF_TINYMPC_MAX_ITER,
-    CF_TINYMPC_CHECK_TERMINATION,
+    static_cast<tinytype>(CF_SAFETY_FILTER_ABS_PRI_TOL),
+    static_cast<tinytype>(CF_SAFETY_FILTER_ABS_DUA_TOL),
+    CF_SAFETY_FILTER_MAX_ITER,
+    CF_SAFETY_FILTER_CHECK_TERMINATION,
     1,
     1);
 }
@@ -124,8 +124,8 @@ void fillReferenceHorizon(const setpoint_t *setpoint, tinyMatrixNxNh &x_ref, tin
   const float vel_ref[3] = {setpoint->velocity.x, setpoint->velocity.y, setpoint->velocity.z};
   const float acc_ref[3] = {setpoint->acceleration.x, setpoint->acceleration.y, setpoint->acceleration.z};
 
-  for (int k = 0; k < CF_TINYMPC_HORIZON; ++k) {
-    const tinytype tau = static_cast<tinytype>(k) * static_cast<tinytype>(CF_TINYMPC_DT);
+  for (int k = 0; k < CF_SAFETY_FILTER_HORIZON; ++k) {
+    const tinytype tau = static_cast<tinytype>(k) * static_cast<tinytype>(CF_SAFETY_FILTER_DT);
     for (int axis = 0; axis < 3; ++axis) {
       x_ref(axis, k) =
         static_cast<tinytype>(pos_ref[axis]) +
@@ -137,7 +137,7 @@ void fillReferenceHorizon(const setpoint_t *setpoint, tinyMatrixNxNh &x_ref, tin
     }
   }
 
-  for (int k = 0; k < CF_TINYMPC_HORIZON - 1; ++k) {
+  for (int k = 0; k < CF_SAFETY_FILTER_HORIZON - 1; ++k) {
     u_ref(0, k) = static_cast<tinytype>(acc_ref[0]);
     u_ref(1, k) = static_cast<tinytype>(acc_ref[1]);
     u_ref(2, k) = static_cast<tinytype>(acc_ref[2]);
@@ -205,7 +205,7 @@ bool isInsideSafetyBox(const state_t *state, const float vx, const float vy, con
 
 void updateSolverSafetyBox()
 {
-  for (int k = 0; k < CF_TINYMPC_HORIZON; ++k) {
+  for (int k = 0; k < CF_SAFETY_FILTER_HORIZON; ++k) {
     solver->work->x_min(0, k) = static_cast<tinytype>(sfOriginX - sfBoxXY);
     solver->work->x_max(0, k) = static_cast<tinytype>(sfOriginX + sfBoxXY);
     solver->work->x_min(1, k) = static_cast<tinytype>(sfOriginY - sfBoxXY);
@@ -217,16 +217,16 @@ void updateSolverSafetyBox()
 
 void resetSolverBounds()
 {
-  fillRepeatedColumns(solver->work->x_min, CF_TINYMPC_X_MIN);
-  fillRepeatedColumns(solver->work->x_max, CF_TINYMPC_X_MAX);
+  fillRepeatedColumns(solver->work->x_min, CF_SAFETY_FILTER_X_MIN);
+  fillRepeatedColumns(solver->work->x_max, CF_SAFETY_FILTER_X_MAX);
 }
 
 void fillSafetyFilterReferenceHorizon(const state_t *state,
                                       const float vx, const float vy, const float z,
                                       tinyMatrixNxNh &x_ref, tinyMatrixNuNhm1 &u_ref)
 {
-  for (int k = 0; k < CF_TINYMPC_HORIZON; ++k) {
-    const tinytype tau = static_cast<tinytype>(k) * static_cast<tinytype>(CF_TINYMPC_DT);
+  for (int k = 0; k < CF_SAFETY_FILTER_HORIZON; ++k) {
+    const tinytype tau = static_cast<tinytype>(k) * static_cast<tinytype>(CF_SAFETY_FILTER_DT);
     x_ref(0, k) = static_cast<tinytype>(state->position.x) + tau * static_cast<tinytype>(vx);
     x_ref(1, k) = static_cast<tinytype>(state->position.y) + tau * static_cast<tinytype>(vy);
     x_ref(2, k) = static_cast<tinytype>(z);
@@ -235,14 +235,14 @@ void fillSafetyFilterReferenceHorizon(const state_t *state,
     x_ref(5, k) = static_cast<tinytype>(0.0f);
   }
 
-  for (int k = 0; k < CF_TINYMPC_HORIZON - 1; ++k) {
+  for (int k = 0; k < CF_SAFETY_FILTER_HORIZON - 1; ++k) {
     u_ref(0, k) = static_cast<tinytype>(0.0f);
     u_ref(1, k) = static_cast<tinytype>(0.0f);
     u_ref(2, k) = static_cast<tinytype>(0.0f);
   }
 }
 
-void runTinyMpc(const setpoint_t *setpoint, const state_t *state)
+void runSafetySolver(const setpoint_t *setpoint, const state_t *state)
 {
   current_state(0) = static_cast<tinytype>(state->position.x);
   current_state(1) = static_cast<tinytype>(state->position.y);
@@ -271,25 +271,25 @@ void runTinyMpc(const setpoint_t *setpoint, const state_t *state)
 
 } // namespace
 
-extern "C" void controllerTinyMPCFirmwareInit(void)
+extern "C" void controllerSafetyFilterInit(void)
 {
   controllerPidInit();
-  DEBUG_PRINT("Before initSolver\n");
+  DEBUG_PRINT("Before safety solver init\n");
   const int status = initSolver();
-  DEBUG_PRINT("After initSolver: %d\n", status);
+  DEBUG_PRINT("After safety solver init: %d\n", status);
   if (status != 0) {
     DEBUG_PRINT("Safety filter init failed: %d\n", status);
   }
 }
 
-extern "C" bool controllerTinyMPCFirmwareTest(void)
+extern "C" bool controllerSafetyFilterTest(void)
 {
   return initSolver() == 0;
 }
 
 // The safety filter only edits the position/velocity setpoint. Thrust/attitude
 // conversion stays in controllerPid, the already-tuned inner loop.
-extern "C" void controllerTinyMPCFirmware(control_t *control, const setpoint_t *setpoint,
+extern "C" void controllerSafetyFilter(control_t *control, const setpoint_t *setpoint,
                                           const sensorData_t *sensors,
                                           const state_t *state,
                                           const stabilizerStep_t stabilizerStep)
@@ -341,9 +341,9 @@ extern "C" void controllerTinyMPCFirmware(control_t *control, const setpoint_t *
 
       updateSolverSafetyBox();
       fillSafetyFilterReferenceHorizon(state, safeVx, safeVy, safeZ, reference_states, reference_inputs);
-      runTinyMpc(setpoint, state);
+      runSafetySolver(setpoint, state);
 
-      constexpr int kCmdHorizonIdx = CF_TINYMPC_HORIZON - 1;
+      constexpr int kCmdHorizonIdx = CF_SAFETY_FILTER_HORIZON - 1;
       filtered_setpoint = *setpoint;
       filtered_setpoint.mode.x = modeAbs;
       filtered_setpoint.mode.y = modeAbs;
@@ -391,15 +391,15 @@ extern "C" void controllerTinyMPCFirmware(control_t *control, const setpoint_t *
   if (RATE_DO_EXECUTE(RATE_10_HZ, stabilizerStep)) {
     resetSolverBounds();
     fillReferenceHorizon(setpoint, reference_states, reference_inputs);
-    runTinyMpc(setpoint, state);
+    runSafetySolver(setpoint, state);
 
-    // End of the solved horizon (~CF_TINYMPC_HORIZON * CF_TINYMPC_DT ahead), not one
+    // End of the solved horizon (~CF_SAFETY_FILTER_HORIZON * CF_SAFETY_FILTER_DT ahead), not one
     // solver step: at one step, the drone physically can't have moved (10ms at max
     // accel ~= 0.4mm), so the position setpoint handed to the PID was always ~= the
     // current position regardless of the commanded target, and the PID's position
     // error, and therefore its response, collapsed to ~zero. The far end of the
     // horizon carries the actual commanded intent instead.
-    constexpr int kCmdHorizonIdx = CF_TINYMPC_HORIZON - 1;
+    constexpr int kCmdHorizonIdx = CF_SAFETY_FILTER_HORIZON - 1;
     filtered_setpoint = *setpoint;
     filtered_setpoint.position.x = static_cast<float>(solver->solution->x(0, kCmdHorizonIdx));
     filtered_setpoint.position.y = static_cast<float>(solver->solution->x(1, kCmdHorizonIdx));

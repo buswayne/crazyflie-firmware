@@ -1,5 +1,5 @@
 /**
- * Crazyflie TinyMPC controller interface.
+ * Crazyflie safety filter controller interface.
  */
 #ifndef __CONTROLLER_TINYMPC_H__
 #define __CONTROLLER_TINYMPC_H__

@@ -31,7 +31,7 @@ static ControllerFcns controllerFunctions[] = {
   {.init = controllerINDIInit, .test = controllerINDITest, .update = controllerINDI, .name = "INDI"},
   {.init = controllerBrescianiniInit, .test = controllerBrescianiniTest, .update = controllerBrescianini, .name = "Brescianini"},
   {.init = controllerLeeFirmwareInit, .test = controllerLeeFirmwareTest, .update = controllerLeeFirmware, .name = "Lee"},
-  {.init = controllerTinyMPCFirmwareInit, .test = controllerTinyMPCFirmwareTest, .update = controllerTinyMPCFirmware, .name = "TinyMPC"},
+  {.init = controllerTinyMPCFirmwareInit, .test = controllerTinyMPCFirmwareTest, .update = controllerTinyMPCFirmware, .name = "SafetyFilter"},
   #ifdef CONFIG_CONTROLLER_OOT
   {.init = controllerOutOfTreeInit, .test = controllerOutOfTreeTest, .update = controllerOutOfTree, .name = "OutOfTree"},
   #endif

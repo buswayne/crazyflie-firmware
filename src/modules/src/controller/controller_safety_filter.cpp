@@ -5,7 +5,7 @@
 
 #include "controller_safety_filter.h"
 extern "C" {
-#include "controller_pid.h"
+#include "controller_mellinger.h"
 #include "log.h"
 #include "param.h"
 }
@@ -32,11 +32,10 @@ tinyMatrixNxNh reference_states;
 tinyMatrixNuNhm1 reference_inputs;
 setpoint_t filtered_setpoint;
 bool has_filtered_setpoint = false;
-uint8_t sfEnable = 0;
+uint8_t sfEnable = 1;
 uint8_t sfActive = 0;
 uint8_t sfMode = 0;
 uint32_t sfInterventions = 0;
-uint32_t sfPassThrough = 0;
 uint32_t sfUnsupported = 0;
 uint32_t solveUs = 0;
 uint16_t solveIter = 0;
@@ -53,13 +52,11 @@ float nominalAz = 0.0f;
 float solvedAx = 0.0f;
 float solvedAy = 0.0f;
 float solvedAz = 0.0f;
-float sfBoxXY = 0.5f;
-float sfMinZ = 0.2f;
-float sfMaxZ = 1.5f;
+float nominalPositionRefX = 0.0f;
+float nominalPositionRefY = 0.0f;
+float nominalYawRef = 0.0f;
+bool nominalPositionRefValid = false;
 float sfLookahead = 0.5f;
-float sfOriginX = 0.0f;
-float sfOriginY = 0.0f;
-bool sfOriginValid = false;
 uint8_t sfLastPrintedMode = 255;
 
 template <typename MatrixT>
@@ -80,6 +77,25 @@ void fillRepeatedColumns(MatrixT &out, const double *data)
       out(row, col) = static_cast<tinytype>(data[row]);
     }
   }
+}
+
+template <typename MatrixT>
+void shiftWarmStart(MatrixT &matrix)
+{
+  constexpr int last = MatrixT::ColsAtCompileTime - 1;
+  matrix.leftCols(last) = matrix.rightCols(last).eval();
+  matrix.col(last) = matrix.col(last - 1);
+}
+
+void shiftSolverWarmStart()
+{
+  shiftWarmStart(solver->work->v);
+  shiftWarmStart(solver->work->vnew);
+  shiftWarmStart(solver->work->g);
+  shiftWarmStart(solver->work->z);
+  shiftWarmStart(solver->work->znew);
+  shiftWarmStart(solver->work->y);
+  shiftWarmStart(solver->work->d);
 }
 
 int initSolver()
@@ -128,32 +144,6 @@ int initSolver()
     1);
 }
 
-void fillReferenceHorizon(const setpoint_t *setpoint, tinyMatrixNxNh &x_ref, tinyMatrixNuNhm1 &u_ref)
-{
-  const float pos_ref[3] = {setpoint->position.x, setpoint->position.y, setpoint->position.z};
-  const float vel_ref[3] = {setpoint->velocity.x, setpoint->velocity.y, setpoint->velocity.z};
-  const float acc_ref[3] = {setpoint->acceleration.x, setpoint->acceleration.y, setpoint->acceleration.z};
-
-  for (int k = 0; k < CF_SAFETY_FILTER_HORIZON; ++k) {
-    const tinytype tau = static_cast<tinytype>(k) * static_cast<tinytype>(CF_SAFETY_FILTER_DT);
-    for (int axis = 0; axis < 3; ++axis) {
-      x_ref(axis, k) =
-        static_cast<tinytype>(pos_ref[axis]) +
-        tau * static_cast<tinytype>(vel_ref[axis]) +
-        static_cast<tinytype>(0.5) * tau * tau * static_cast<tinytype>(acc_ref[axis]);
-      x_ref(axis + 3, k) =
-        static_cast<tinytype>(vel_ref[axis]) +
-        tau * static_cast<tinytype>(acc_ref[axis]);
-    }
-  }
-
-  for (int k = 0; k < CF_SAFETY_FILTER_HORIZON - 1; ++k) {
-    u_ref(0, k) = static_cast<tinytype>(acc_ref[0]);
-    u_ref(1, k) = static_cast<tinytype>(acc_ref[1]);
-    u_ref(2, k) = static_cast<tinytype>(acc_ref[2]);
-  }
-}
-
 float clampFloat(float value, float minValue, float maxValue)
 {
   if (value < minValue) {
@@ -187,13 +177,6 @@ bool isSafetyFilterSetpoint(const setpoint_t *setpoint)
          (setpoint->mode.z == modeAbs || setpoint->mode.z == modeVelocity);
 }
 
-bool isDisabledSetpoint(const setpoint_t *setpoint)
-{
-  return setpoint->mode.x == modeDisable ||
-         setpoint->mode.y == modeDisable ||
-         setpoint->mode.z == modeDisable;
-}
-
 void printSafetyFilterMode(const uint8_t mode)
 {
   if (mode == sfLastPrintedMode) {
@@ -203,32 +186,55 @@ void printSafetyFilterMode(const uint8_t mode)
   DEBUG_PRINT("SF mode %u (0 off, 1 pass, 2 filter, 3 unsupported)\n", mode);
 }
 
-bool isInsideSafetyBox(const state_t *state, const float vx, const float vy, const float z)
-{
-  const float x = state->position.x + vx * sfLookahead;
-  const float y = state->position.y + vy * sfLookahead;
-  return x >= sfOriginX - sfBoxXY && x <= sfOriginX + sfBoxXY &&
-         y >= sfOriginY - sfBoxXY && y <= sfOriginY + sfBoxXY &&
-         state->position.z >= sfMinZ && state->position.z <= sfMaxZ &&
-         z >= sfMinZ && z <= sfMaxZ;
-}
-
-void updateSolverSafetyBox()
-{
-  for (int k = 0; k < CF_SAFETY_FILTER_HORIZON; ++k) {
-    solver->work->x_min(0, k) = static_cast<tinytype>(sfOriginX - sfBoxXY);
-    solver->work->x_max(0, k) = static_cast<tinytype>(sfOriginX + sfBoxXY);
-    solver->work->x_min(1, k) = static_cast<tinytype>(sfOriginY - sfBoxXY);
-    solver->work->x_max(1, k) = static_cast<tinytype>(sfOriginY + sfBoxXY);
-    solver->work->x_min(2, k) = static_cast<tinytype>(sfMinZ);
-    solver->work->x_max(2, k) = static_cast<tinytype>(sfMaxZ);
-  }
-}
-
-void resetSolverBounds()
+void resetSolverBounds(const state_t *state)
 {
   fillRepeatedColumns(solver->work->x_min, CF_SAFETY_FILTER_X_MIN);
   fillRepeatedColumns(solver->work->x_max, CF_SAFETY_FILTER_X_MAX);
+
+  // If the craft is already outside the box (an earlier saturated push got
+  // it there), a hard box across the whole horizon makes the QP permanently
+  // infeasible: physically it can't re-enter the box within one 50ms step at
+  // the allowed accel, so tiny_solve() never converges right when the
+  // strongest recovery push is needed (observed: solved=0/20 once z escaped
+  // X_MAX, falling back to the much weaker CF_SAFETY_FILTER_RECOVERY_SPEED
+  // target). Taper the bound back to the real box linearly over the horizon
+  // instead, so there is always a feasible, maximum-effort path back in.
+  const float pos[3] = {state->position.x, state->position.y, state->position.z};
+  for (int axis = 0; axis < 3; ++axis) {
+    const float overshootHigh = pos[axis] - static_cast<float>(CF_SAFETY_FILTER_X_MAX[axis]);
+    const float overshootLow = static_cast<float>(CF_SAFETY_FILTER_X_MIN[axis]) - pos[axis];
+    if (overshootHigh > 0.0f) {
+      const float axisMax = static_cast<float>(CF_SAFETY_FILTER_X_MAX[axis]);
+      for (int k = 0; k < CF_SAFETY_FILTER_HORIZON; ++k) {
+        const float taper = overshootHigh * (1.0f - static_cast<float>(k) / static_cast<float>(CF_SAFETY_FILTER_HORIZON - 1));
+        solver->work->x_max(axis, k) = static_cast<tinytype>(axisMax + taper);
+      }
+    } else if (overshootLow > 0.0f) {
+      const float axisMin = static_cast<float>(CF_SAFETY_FILTER_X_MIN[axis]);
+      for (int k = 0; k < CF_SAFETY_FILTER_HORIZON; ++k) {
+        const float taper = overshootLow * (1.0f - static_cast<float>(k) / static_cast<float>(CF_SAFETY_FILTER_HORIZON - 1));
+        solver->work->x_min(axis, k) = static_cast<tinytype>(axisMin - taper);
+      }
+    }
+  }
+
+  // x0 is a measurement, not a decision variable. Constraining it makes the
+  // QP permanently infeasible as soon as estimation noise crosses the box.
+  for (int axis = 0; axis < 3; ++axis) {
+    solver->work->x_min(axis, 0) = static_cast<tinytype>(-1e17);
+    solver->work->x_max(axis, 0) = static_cast<tinytype>(1e17);
+  }
+}
+
+float recoveryVelocity(float position, float minPosition, float maxPosition)
+{
+  if (position < minPosition) {
+    return static_cast<float>(CF_SAFETY_FILTER_RECOVERY_SPEED);
+  }
+  if (position > maxPosition) {
+    return -static_cast<float>(CF_SAFETY_FILTER_RECOVERY_SPEED);
+  }
+  return 0.0f;
 }
 
 void fillSafetyFilterReferenceHorizon(const state_t *state,
@@ -279,6 +285,7 @@ void runSafetySolver(const setpoint_t *setpoint, const state_t *state)
   current_state(4) = static_cast<tinytype>(state->velocity.y);
   current_state(5) = static_cast<tinytype>(state->velocity.z);
 
+  shiftSolverWarmStart();
   tiny_set_x0(solver, current_state);
   tiny_set_x_ref(solver, reference_states);
   tiny_set_u_ref(solver, reference_inputs);
@@ -293,9 +300,16 @@ void runSafetySolver(const setpoint_t *setpoint, const state_t *state)
   dualInputResidual = static_cast<float>(solver->work->dual_residual_input);
   primalResidual = fmaxf(primalStateResidual, primalInputResidual);
   dualResidual = fmaxf(dualStateResidual, dualInputResidual);
-  solvedAx = static_cast<float>(solver->solution->u(0, 0));
-  solvedAy = static_cast<float>(solver->solution->u(1, 0));
-  solvedAz = static_cast<float>(solver->solution->u(2, 0));
+  if (solveStatus) {
+    solvedAx = static_cast<float>(solver->solution->u(0, 0));
+    solvedAy = static_cast<float>(solver->solution->u(1, 0));
+    solvedAz = static_cast<float>(solver->solution->u(2, 0));
+  } else {
+    // A non-converged iterate is not a safe command. Hold hover instead.
+    solvedAx = 0.0f;
+    solvedAy = 0.0f;
+    solvedAz = 0.0f;
+  }
   static bool solveTimeReported = false;
   if (!solveTimeReported) {
     DEBUG_PRINT("first safety solve took %lu us, iter=%u, solved=%u\n",
@@ -308,7 +322,7 @@ void runSafetySolver(const setpoint_t *setpoint, const state_t *state)
 
 extern "C" void controllerSafetyFilterInit(void)
 {
-  controllerPidInit();
+  controllerMellingerFirmwareInit();
   DEBUG_PRINT("Before safety solver init\n");
   const int status = initSolver();
   DEBUG_PRINT("After safety solver init: %d\n", status);
@@ -322,136 +336,120 @@ extern "C" bool controllerSafetyFilterTest(void)
   return initSolver() == 0;
 }
 
-// The safety filter only edits the position/velocity setpoint. Thrust/attitude
-// conversion stays in controllerPid, the already-tuned inner loop.
+// TinyMPC returns u0; Mellinger converts that acceleration to thrust/attitude.
 extern "C" void controllerSafetyFilter(control_t *control, const setpoint_t *setpoint,
                                           const sensorData_t *sensors,
                                           const state_t *state,
                                           const stabilizerStep_t stabilizerStep)
 {
-  if (initSolver() != 0 ||
-      (!sfEnable && (setpoint->mode.x != modeAbs || setpoint->mode.y != modeAbs || setpoint->mode.z != modeAbs))) {
-    // Solver not ready, or manual modes without safety filter: use stock PID.
+  if (initSolver() != 0 || !sfEnable) {
     has_filtered_setpoint = false;
-    sfOriginValid = false;
+    nominalPositionRefValid = false;
     sfActive = 0;
     sfMode = 0;
     printSafetyFilterMode(sfMode);
-    controllerPid(control, setpoint, sensors, state, stabilizerStep);
+    controllerMellingerFirmware(control, setpoint, sensors, state, stabilizerStep);
     return;
   }
 
   if (sfEnable && isSafetyFilterSetpoint(setpoint)) {
-    if (!sfOriginValid) {
-      sfOriginX = state->position.x;
-      sfOriginY = state->position.y;
-      sfOriginValid = true;
-    }
-
     float vx = 0.0f;
     float vy = 0.0f;
     bodyVelocityToWorld(setpoint, state, &vx, &vy);
-    const float predictedZ = setpoint->mode.z == modeVelocity
-      ? state->position.z + setpoint->velocity.z * sfLookahead
-      : setpoint->position.z;
-    sfActive = !isInsideSafetyBox(state, vx, vy, predictedZ);
-    sfMode = sfActive ? 2 : 1;
+    sfActive = 1;
+    sfMode = 2;
     printSafetyFilterMode(sfMode);
 
-    if (!sfActive) {
-      has_filtered_setpoint = false;
-      sfPassThrough++;
-      controllerPid(control, setpoint, sensors, state, stabilizerStep);
-      return;
-    }
-
     if (!has_filtered_setpoint || RATE_DO_EXECUTE(RATE_10_HZ, stabilizerStep)) {
-      const float desiredVz = setpoint->mode.z == modeVelocity
-        ? setpoint->velocity.z
-        : (predictedZ - state->position.z) / sfLookahead;
-      nominalAx = clampFloat((vx - state->velocity.x) / sfLookahead,
+      if (!nominalPositionRefValid) {
+        nominalPositionRefX = state->position.x;
+        nominalPositionRefY = state->position.y;
+        nominalYawRef = state->attitude.yaw;
+        nominalPositionRefValid = true;
+      }
+      nominalPositionRefX = clampFloat(nominalPositionRefX + 0.1f * vx,
+                                       CF_SAFETY_FILTER_X_MIN[0], CF_SAFETY_FILTER_X_MAX[0]);
+      nominalPositionRefY = clampFloat(nominalPositionRefY + 0.1f * vy,
+                                       CF_SAFETY_FILTER_X_MIN[1], CF_SAFETY_FILTER_X_MAX[1]);
+      nominalYawRef += 0.1f * setpoint->attitudeRate.yaw;
+      if (nominalYawRef > 180.0f) {
+        nominalYawRef -= 360.0f;
+      } else if (nominalYawRef < -180.0f) {
+        nominalYawRef += 360.0f;
+      }
+
+      setpoint_t nominalSetpoint = *setpoint;
+      nominalSetpoint.mode.x = modeAbs;
+      nominalSetpoint.mode.y = modeAbs;
+      nominalSetpoint.position.x = nominalPositionRefX;
+      nominalSetpoint.position.y = nominalPositionRefY;
+      nominalSetpoint.velocity.x = vx;
+      nominalSetpoint.velocity.y = vy;
+      nominalSetpoint.velocity_body = false;
+      Axis3f nominalAcceleration;
+      controllerMellingerFirmwareNominalAcceleration(&nominalAcceleration, &nominalSetpoint, state, 0.1f);
+      nominalAx = clampFloat(nominalAcceleration.x,
                              static_cast<float>(CF_SAFETY_FILTER_U_MIN[0]),
                              static_cast<float>(CF_SAFETY_FILTER_U_MAX[0]));
-      nominalAy = clampFloat((vy - state->velocity.y) / sfLookahead,
+      nominalAy = clampFloat(nominalAcceleration.y,
                              static_cast<float>(CF_SAFETY_FILTER_U_MIN[1]),
                              static_cast<float>(CF_SAFETY_FILTER_U_MAX[1]));
-      nominalAz = clampFloat((desiredVz - state->velocity.z) / sfLookahead,
+      nominalAz = clampFloat(nominalAcceleration.z,
                              static_cast<float>(CF_SAFETY_FILTER_U_MIN[2]),
                              static_cast<float>(CF_SAFETY_FILTER_U_MAX[2]));
 
-      updateSolverSafetyBox();
+      resetSolverBounds(state);
       fillSafetyFilterReferenceHorizon(state, nominalAx, nominalAy, nominalAz, reference_states, reference_inputs);
       runSafetySolver(setpoint, state);
 
-      constexpr int kCmdHorizonIdx = CF_SAFETY_FILTER_HORIZON - 1;
       filtered_setpoint = *setpoint;
       filtered_setpoint.mode.x = modeAbs;
       filtered_setpoint.mode.y = modeAbs;
       filtered_setpoint.mode.z = modeAbs;
+      filtered_setpoint.mode.yaw = modeAbs;
+      filtered_setpoint.attitude.yaw = nominalYawRef;
       filtered_setpoint.velocity_body = false;
-      filtered_setpoint.position.x = static_cast<float>(solver->solution->x(0, kCmdHorizonIdx));
-      filtered_setpoint.position.y = static_cast<float>(solver->solution->x(1, kCmdHorizonIdx));
-      filtered_setpoint.velocity.x = static_cast<float>(solver->solution->x(3, kCmdHorizonIdx));
-      filtered_setpoint.velocity.y = static_cast<float>(solver->solution->x(4, kCmdHorizonIdx));
-      filtered_setpoint.position.z = static_cast<float>(solver->solution->x(2, kCmdHorizonIdx));
+      filtered_setpoint.position = state->position;
+      filtered_setpoint.velocity = state->velocity;
+      if (solveStatus) {
+        filtered_setpoint.acceleration.x = solvedAx;
+        filtered_setpoint.acceleration.y = solvedAy;
+        filtered_setpoint.acceleration.z = solvedAz;
+      } else {
+        const float lookahead = sfLookahead;
+        filtered_setpoint.acceleration.x = clampFloat(
+          (recoveryVelocity(state->position.x, CF_SAFETY_FILTER_X_MIN[0], CF_SAFETY_FILTER_X_MAX[0]) - state->velocity.x) / lookahead,
+          CF_SAFETY_FILTER_U_MIN[0], CF_SAFETY_FILTER_U_MAX[0]);
+        filtered_setpoint.acceleration.y = clampFloat(
+          (recoveryVelocity(state->position.y, CF_SAFETY_FILTER_X_MIN[1], CF_SAFETY_FILTER_X_MAX[1]) - state->velocity.y) / lookahead,
+          CF_SAFETY_FILTER_U_MIN[1], CF_SAFETY_FILTER_U_MAX[1]);
+        filtered_setpoint.acceleration.z = clampFloat(
+          (recoveryVelocity(state->position.z, CF_SAFETY_FILTER_X_MIN[2], CF_SAFETY_FILTER_X_MAX[2]) - state->velocity.z) / lookahead,
+          CF_SAFETY_FILTER_U_MIN[2], CF_SAFETY_FILTER_U_MAX[2]);
+      }
       has_filtered_setpoint = true;
-      sfInterventions++;
-      DEBUG_PRINT("SF intervention: pos=(%.2f %.2f %.2f), uNom=(%.2f %.2f %.2f), uSol=(%.2f %.2f %.2f), solved=%u/%u\n",
-                  (double)state->position.x, (double)state->position.y, (double)state->position.z,
-                  (double)nominalAx, (double)nominalAy, (double)nominalAz,
-                  (double)solvedAx, (double)solvedAy, (double)solvedAz,
-                  solveStatus, solveIter);
+      const float deltaAx = filtered_setpoint.acceleration.x - nominalAx;
+      const float deltaAy = filtered_setpoint.acceleration.y - nominalAy;
+      const float deltaAz = filtered_setpoint.acceleration.z - nominalAz;
+      if (!solveStatus || sqrtf(deltaAx * deltaAx + deltaAy * deltaAy + deltaAz * deltaAz) > 0.05f) {
+        sfInterventions++;
+      }
     }
 
-    controllerPid(control, &filtered_setpoint, sensors, state, stabilizerStep);
+    filtered_setpoint.position = state->position;
+    filtered_setpoint.velocity = state->velocity;
+    controllerMellingerFirmwareFromAcceleration(control, &filtered_setpoint, sensors, state, stabilizerStep);
     return;
   }
 
-  sfOriginValid = false;
   sfActive = 0;
   sfMode = 0;
-
-  if (isDisabledSetpoint(setpoint)) {
-    has_filtered_setpoint = false;
-    printSafetyFilterMode(sfMode);
-    controllerPid(control, setpoint, sensors, state, stabilizerStep);
-    return;
-  }
-
-  if (setpoint->mode.x != modeAbs || setpoint->mode.y != modeAbs || setpoint->mode.z != modeAbs) {
-    has_filtered_setpoint = false;
-    if (sfEnable) {
-      sfMode = 3;
-      printSafetyFilterMode(sfMode);
-      sfUnsupported++;
-    }
-    controllerPid(control, setpoint, sensors, state, stabilizerStep);
-    return;
-  }
-
-  if (RATE_DO_EXECUTE(RATE_10_HZ, stabilizerStep)) {
-    resetSolverBounds();
-    fillReferenceHorizon(setpoint, reference_states, reference_inputs);
-    runSafetySolver(setpoint, state);
-
-    // End of the solved horizon (~CF_SAFETY_FILTER_HORIZON * CF_SAFETY_FILTER_DT ahead), not one
-    // solver step: at one step, the drone physically can't have moved (10ms at max
-    // accel ~= 0.4mm), so the position setpoint handed to the PID was always ~= the
-    // current position regardless of the commanded target, and the PID's position
-    // error, and therefore its response, collapsed to ~zero. The far end of the
-    // horizon carries the actual commanded intent instead.
-    constexpr int kCmdHorizonIdx = CF_SAFETY_FILTER_HORIZON - 1;
-    filtered_setpoint = *setpoint;
-    filtered_setpoint.position.x = static_cast<float>(solver->solution->x(0, kCmdHorizonIdx));
-    filtered_setpoint.position.y = static_cast<float>(solver->solution->x(1, kCmdHorizonIdx));
-    filtered_setpoint.position.z = static_cast<float>(solver->solution->x(2, kCmdHorizonIdx));
-    filtered_setpoint.velocity.x = static_cast<float>(solver->solution->x(3, kCmdHorizonIdx));
-    filtered_setpoint.velocity.y = static_cast<float>(solver->solution->x(4, kCmdHorizonIdx));
-    filtered_setpoint.velocity.z = static_cast<float>(solver->solution->x(5, kCmdHorizonIdx));
-    has_filtered_setpoint = true;
-  }
-
-  controllerPid(control, has_filtered_setpoint ? &filtered_setpoint : setpoint, sensors, state, stabilizerStep);
+  has_filtered_setpoint = false;
+  nominalPositionRefValid = false;
+  sfMode = 3;
+  sfUnsupported++;
+  printSafetyFilterMode(sfMode);
+  controllerMellingerFirmware(control, setpoint, sensors, state, stabilizerStep);
 }
 
 #pragma GCC diagnostic push
@@ -459,9 +457,6 @@ extern "C" void controllerSafetyFilter(control_t *control, const setpoint_t *set
 
 PARAM_GROUP_START(safeFilt)
 PARAM_ADD(PARAM_UINT8, sfEnable, &sfEnable)
-PARAM_ADD(PARAM_FLOAT, sfBoxXY, &sfBoxXY)
-PARAM_ADD(PARAM_FLOAT, sfMinZ, &sfMinZ)
-PARAM_ADD(PARAM_FLOAT, sfMaxZ, &sfMaxZ)
 PARAM_ADD(PARAM_FLOAT, sfLookahead, &sfLookahead)
 PARAM_GROUP_STOP(safeFilt)
 
@@ -469,7 +464,6 @@ LOG_GROUP_START(safeFilt)
 LOG_ADD(LOG_UINT8, sfActive, &sfActive)
 LOG_ADD(LOG_UINT8, sfMode, &sfMode)
 LOG_ADD(LOG_UINT32, sfInterv, &sfInterventions)
-LOG_ADD(LOG_UINT32, sfPass, &sfPassThrough)
 LOG_ADD(LOG_UINT32, sfUnsup, &sfUnsupported)
 LOG_ADD(LOG_UINT32, solveUs, &solveUs)
 LOG_ADD(LOG_UINT16, iter, &solveIter)
@@ -486,8 +480,9 @@ LOG_ADD(LOG_FLOAT, uNomZ, &nominalAz)
 LOG_ADD(LOG_FLOAT, uSolX, &solvedAx)
 LOG_ADD(LOG_FLOAT, uSolY, &solvedAy)
 LOG_ADD(LOG_FLOAT, uSolZ, &solvedAz)
-LOG_ADD(LOG_FLOAT, sfOriginX, &sfOriginX)
-LOG_ADD(LOG_FLOAT, sfOriginY, &sfOriginY)
+LOG_ADD(LOG_FLOAT, refX, &nominalPositionRefX)
+LOG_ADD(LOG_FLOAT, refY, &nominalPositionRefY)
+LOG_ADD(LOG_FLOAT, refYaw, &nominalYawRef)
 LOG_GROUP_STOP(safeFilt)
 
 #pragma GCC diagnostic pop

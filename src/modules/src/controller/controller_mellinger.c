@@ -49,12 +49,12 @@ We added the following:
 // to hold the default values
 static controllerMellinger_t g_self = {
   .mass = CF_MASS,
-  .massThrust = 132000,
+  .massThrust = 90000,
 
   // XY Position PID
-  .kp_xy = 0.4,       // P
-  .kd_xy = 0.2,       // D
-  .ki_xy = 0.05,      // I
+  .kp_xy = 0.10,      // P
+  .kd_xy = 0.10,      // D
+  .ki_xy = 0.0,       // I
   .i_range_xy = 2.0,
 
   // Z Position
@@ -98,6 +98,7 @@ void controllerMellingerReset(controllerMellinger_t* self)
   self->i_error_m_x = 0;
   self->i_error_m_y = 0;
   self->i_error_m_z = 0;
+  self->zRefFiltInit = false;
 }
 
 void controllerMellingerInit(controllerMellinger_t* self)
@@ -176,6 +177,11 @@ void controllerMellinger(controllerMellinger_t* self, control_t *control, const 
 
   // Calculate desired axes and current thrust
   if (setpoint->mode.x == modeAbs) {
+    // Not tracking the catch-all branch's shadow reference this tick; keep
+    // it glued to the real position so it starts clean, not from a stale
+    // value, if a pilot-style setpoint takes over later.
+    self->zRefFiltInit = false;
+
     // Desired thrust [F_des]
     target_thrust.x = self->mass * setpoint->acceleration.x                       + self->kp_xy * r_error.x + self->kd_xy * v_error.x + self->ki_xy * self->i_error_x;
     target_thrust.y = self->mass * setpoint->acceleration.y                       + self->kp_xy * r_error.y + self->kd_xy * v_error.y + self->ki_xy * self->i_error_y;
@@ -199,6 +205,8 @@ void controllerMellinger(controllerMellinger_t* self, control_t *control, const 
   } else if (setpoint->mode.pitch == modeAbs &&
              setpoint->mode.roll  == modeAbs &&
              setpoint->mode.z     == modeDisable) { // Manual mode, no assist
+    self->zRefFiltInit = false; // see comment above
+
     // Directly compute desired rotation for attitude-only control
     // No need to calculate current_thrust as it is not used in this mode
     float cmd_roll  =  radians(setpoint->attitude.roll);
@@ -214,9 +222,26 @@ void controllerMellinger(controllerMellinger_t* self, control_t *control, const 
     self->z_axis_desired = mcolumn(R_cmd, 2);
   } else { // Unknown combination of modes
     // Hover using the received z setpoint (safe behaviour)
+    //
+    // This branch is only reached by pilot-style setpoints (e.g. cfclient's
+    // hover-assist, which jumps setpoint->position.z to an absolute target
+    // in one step -- never by Mellinger trajectories, which always set
+    // mode.x == modeAbs and take the branch above). A raw kp_z * r_error.z
+    // step response to that jump gave an instantaneous thrust spike (violent
+    // climb on arm). PID avoids this with an explicit velocity-saturated
+    // cascade (position_controller_pid.c); mirror that here with a
+    // slew-limited shadow reference instead of the raw setpoint.
+    if (!self->zRefFiltInit) {
+      self->zRefFiltered = state->position.z;
+      self->zRefFiltInit = true;
+    }
+    self->zRefFiltered += clamp(setpoint->position.z - self->zRefFiltered,
+                                 -PID_POS_VEL_Z_MAX * dt, PID_POS_VEL_Z_MAX * dt);
+    const float zRefError = self->zRefFiltered - state->position.z;
+
     target_thrust.x = 0;
     target_thrust.y = 0;
-    target_thrust.z = self->mass * GRAVITY_MAGNITUDE + self->kp_z  * r_error.z + self->kd_z  * v_error.z + self->ki_z  * self->i_error_z;
+    target_thrust.z = self->mass * GRAVITY_MAGNITUDE + self->kp_z  * zRefError + self->kd_z  * v_error.z + self->ki_z  * self->i_error_z;
 
     // Calculate axis [zB_des]
     self->z_axis_desired = vnormalize(target_thrust);
@@ -350,6 +375,42 @@ void controllerMellingerFirmware(control_t *control, const setpoint_t *setpoint,
                                          const stabilizerStep_t stabilizerStep)
 {
   controllerMellinger(&g_self, control, setpoint, sensors, state, stabilizerStep);
+}
+
+void controllerMellingerFirmwareNominalAcceleration(Axis3f *acceleration, const setpoint_t *setpoint,
+                                         const state_t *state, const float dt)
+{
+  const float positionErrorX = setpoint->mode.x == modeAbs ? setpoint->position.x - state->position.x : 0.0f;
+  const float positionErrorY = setpoint->mode.y == modeAbs ? setpoint->position.y - state->position.y : 0.0f;
+  const float positionErrorZ = setpoint->mode.z == modeAbs ? setpoint->position.z - state->position.z : 0.0f;
+
+  g_self.i_error_x = clamp(g_self.i_error_x + positionErrorX * dt, -g_self.i_range_xy, g_self.i_range_xy);
+  g_self.i_error_y = clamp(g_self.i_error_y + positionErrorY * dt, -g_self.i_range_xy, g_self.i_range_xy);
+  g_self.i_error_z = clamp(g_self.i_error_z + positionErrorZ * dt, -g_self.i_range_z, g_self.i_range_z);
+
+  acceleration->x = setpoint->acceleration.x +
+    (g_self.kp_xy * positionErrorX + g_self.kd_xy * (setpoint->velocity.x - state->velocity.x) + g_self.ki_xy * g_self.i_error_x) / g_self.mass;
+  acceleration->y = setpoint->acceleration.y +
+    (g_self.kp_xy * positionErrorY + g_self.kd_xy * (setpoint->velocity.y - state->velocity.y) + g_self.ki_xy * g_self.i_error_y) / g_self.mass;
+  acceleration->z = setpoint->acceleration.z +
+    (g_self.kp_z * positionErrorZ + g_self.kd_z * (setpoint->velocity.z - state->velocity.z) + g_self.ki_z * g_self.i_error_z) / g_self.mass;
+}
+
+void controllerMellingerFirmwareFromAcceleration(control_t *control, const setpoint_t *setpoint,
+                                         const sensorData_t *sensors,
+                                         const state_t *state,
+                                         const stabilizerStep_t stabilizerStep)
+{
+  const float integralX = g_self.i_error_x;
+  const float integralY = g_self.i_error_y;
+  const float integralZ = g_self.i_error_z;
+  g_self.i_error_x = 0.0f;
+  g_self.i_error_y = 0.0f;
+  g_self.i_error_z = 0.0f;
+  controllerMellinger(&g_self, control, setpoint, sensors, state, stabilizerStep);
+  g_self.i_error_x = integralX;
+  g_self.i_error_y = integralY;
+  g_self.i_error_z = integralZ;
 }
 
 

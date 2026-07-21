@@ -74,6 +74,12 @@ typedef struct {
     float i_error_m_y;
     float i_error_m_z;
 
+    // Shadow z reference for the "unknown combination of modes" fallback
+    // (pilot-style setpoints, e.g. cfclient hover-assist). Slew-limited
+    // separately from the tracked position control path below.
+    float zRefFiltered;
+    bool zRefFiltInit;
+
     // Logging variables
     struct vec z_axis_desired;
 
@@ -99,6 +105,12 @@ void controllerMellinger(controllerMellinger_t* self, control_t *control, const 
 void controllerMellingerFirmwareInit(void);
 bool controllerMellingerFirmwareTest(void);
 void controllerMellingerFirmware(control_t *control, const setpoint_t *setpoint,
+                                         const sensorData_t *sensors,
+                                         const state_t *state,
+                                         const stabilizerStep_t stabilizerStep);
+void controllerMellingerFirmwareNominalAcceleration(Axis3f *acceleration, const setpoint_t *setpoint,
+                                         const state_t *state, const float dt);
+void controllerMellingerFirmwareFromAcceleration(control_t *control, const setpoint_t *setpoint,
                                          const sensorData_t *sensors,
                                          const state_t *state,
                                          const stabilizerStep_t stabilizerStep);

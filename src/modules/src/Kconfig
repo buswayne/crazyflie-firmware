@@ -58,6 +58,11 @@ config CONTROLLER_OOT
     bool "Out-of-tree controller"
     default n
 
+config CONTROLLER_SAFETY_FILTER_OSQP
+    bool "Use OSQP terminal safety filter backend"
+    depends on CONTROLLER_SAFETY_FILTER
+    default n
+
 config ESTIMATOR_KALMAN_ENABLE
     bool "Enable Kalman Estimator"
     default y

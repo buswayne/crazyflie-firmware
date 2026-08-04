@@ -1,4 +1,6 @@
-obj-y += tinympc/
+ifneq ($(CONFIG_CONTROLLER_SAFETY_FILTER_OSQP),y)
+obj-$(CONFIG_CONTROLLER_SAFETY_FILTER) += tinympc/
+endif
 
 obj-y += CMSIS/CMSIS/DSP/Source/BasicMathFunctions/arm_abs_f32.o
 obj-y += CMSIS/CMSIS/DSP/Source/BasicMathFunctions/arm_abs_q15.o

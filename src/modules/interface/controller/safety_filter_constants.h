@@ -18,7 +18,7 @@
 #define CF_SAFETY_FILTER_ABS_PRI_TOL 5.0e-3
 #define CF_SAFETY_FILTER_ABS_DUA_TOL 5.0e-3
 #define CF_SAFETY_FILTER_MIN_THRUST_N 0.0
-#define CF_SAFETY_FILTER_MAX_THRUST_N 0.75
+#define CF_SAFETY_FILTER_MAX_THRUST_N 1.1772
 #define CF_SAFETY_FILTER_RECOVERY_SPEED 0.25
 
 static const double CF_SAFETY_FILTER_A[36] = {1.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0};
@@ -27,7 +27,7 @@ static const double CF_SAFETY_FILTER_B[18] = {0.00125, 0.0, 0.0, 0.0, 0.00125, 0
 static const double CF_SAFETY_FILTER_Q[36] = {0.0};
 static const double CF_SAFETY_FILTER_R[9] = {0.35, 0.0, 0.0, 0.0, 0.35, 0.0, 0.0, 0.0, 0.5};
 static const double CF_SAFETY_FILTER_QF[36] = {0.0};
-static const double CF_SAFETY_FILTER_X_MIN[6] = {-1.0, -1.0, 0.0, -1e+17, -1e+17, -1e+17};
-static const double CF_SAFETY_FILTER_X_MAX[6] = {1.0, 1.0, 2.0, 1e+17, 1e+17, 1e+17};
-static const double CF_SAFETY_FILTER_U_MIN[3] = {-8.0, -8.0, -10.0};
-static const double CF_SAFETY_FILTER_U_MAX[3] = {8.0, 8.0, 10.0};
+static const double CF_SAFETY_FILTER_X_MIN[6] = {-1.5, -1.5, 0.3, -1e+17, -1e+17, -1e+17};
+static const double CF_SAFETY_FILTER_X_MAX[6] = {1.5, 1.5, 2.0, 1e+17, 1e+17, 1e+17};
+static const double CF_SAFETY_FILTER_U_MIN[3] = {-9.81255722, -9.81255722, -5.0};
+static const double CF_SAFETY_FILTER_U_MAX[3] = {9.81255722, 9.81255722, 5.0};

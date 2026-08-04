@@ -8,7 +8,9 @@
 #include "controller_indi.h"
 #include "controller_brescianini.h"
 #include "controller_lee.h"
+#ifdef CONFIG_CONTROLLER_SAFETY_FILTER
 #include "controller_safety_filter.h"
+#endif
 
 #include "autoconf.h"
 
@@ -31,7 +33,11 @@ static ControllerFcns controllerFunctions[] = {
   {.init = controllerINDIInit, .test = controllerINDITest, .update = controllerINDI, .name = "INDI"},
   {.init = controllerBrescianiniInit, .test = controllerBrescianiniTest, .update = controllerBrescianini, .name = "Brescianini"},
   {.init = controllerLeeFirmwareInit, .test = controllerLeeFirmwareTest, .update = controllerLeeFirmware, .name = "Lee"},
+  #ifdef CONFIG_CONTROLLER_SAFETY_FILTER
   {.init = controllerSafetyFilterInit, .test = controllerSafetyFilterTest, .update = controllerSafetyFilter, .name = "SafetyFilter"},
+  #else
+  {.init = 0, .test = 0, .update = 0, .name = "SafetyFilter disabled"},
+  #endif
   #ifdef CONFIG_CONTROLLER_OOT
   {.init = controllerOutOfTreeInit, .test = controllerOutOfTreeTest, .update = controllerOutOfTree, .name = "OutOfTree"},
   #endif
